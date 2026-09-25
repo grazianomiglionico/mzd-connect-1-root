@@ -27,13 +27,16 @@
 
     // Dump completo della CMU: apre il terminale JCI e mostra a schermo il
     // comando da lanciare (lo script vero e proprio e' su USB, dump/cmu-dump.sh).
-    // Nota: la UI non puo' digitare da sola nel terminale, quindi il comando va
-    // eseguito una volta (poi il dump e' interamente automatico).
+    //
+    // ESECUZIONE AUTOMATICA: se il CMU ha l'autorun casdk/MZD-AIO installato,
+    // inserendo la chiavetta parte da solo dump/autorun.sh (nessuna digitazione).
+    // Altrimenti la UI in WebKit non puo' digitare nel terminale, quindi il
+    // comando va eseguito una volta a mano (poi il dump e' interamente automatico).
     function cmuDump(view) {
         xssLog(view, 'CMU full dump: apro il terminale...')
         terminal(view)
         setTimeout(function () {
-            xssLog(view, 'Nel terminale digita ed esegui:', 'xss-hint')
+            xssLog(view, 'Se l\'autorun non parte da solo, esegui nel terminale:', 'xss-hint')
             xssLog(view, CMU_DUMP_CMD, 'xss-cmd')
         }, 15000)
     }
