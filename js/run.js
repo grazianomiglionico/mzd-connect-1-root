@@ -1,41 +1,27 @@
 (function (topDocument, window, framework, log) {
     // =========================================================================
-    // Rimuove/chiude l'avviso "Accumulo PM in DPF" dalla CMU.
+    // Rimuove dalla CMU l'avviso "Accumulo PM in DPF" (app "Avvisi di guida").
     //
-    // L'HMI carica ogni app (compresa "Avvisi di guida") in un IFRAME interno.
-    // Questo script cerca l'avviso nel documento principale E dentro TUTTI gli
-    // iframe (ricorsivamente), e:
-    //   - nella LISTA avvisi: nasconde la riga "Accumulo PM in DPF"
-    //   - nella schermata di dettaglio: prova a uscirne (back) e in fallback la
-    //     nasconde.
+    // Approccio CHIRURGICO e SICURO:
+    //  - agisce SOLO su elementi VISIBILI che contengono ESATTAMENTE il titolo
+    //    "accumulo pm in dpf" (ignora il testo precaricato/nascosto e i grandi
+    //    contenitori come BODY);
+    //  - nella LISTA avvisi: nasconde la RIGA;
+    //  - nella schermata di DETTAGLIO: nasconde la vista del dettaglio;
+    //  - NON clicca "back" e NON naviga mai (niente schermate che saltano).
     //
-    // Iniettato all'avvio via MP3: nessun touch/terminale/tastiera/dump.
-    // Agisce SOLO sulla grafica dell'HMI (nessun file di sistema): non puo'
-    // danneggiare nulla, si ripristina al riavvio. Non tocca la spia cruscotto
-    // ne' la centralina.
+    // Solo grafica, nessun file di sistema: non puo' danneggiare nulla, si
+    // ripristina al riavvio. Iniettato via MP3: nessun touch/terminale/tastiera.
     // =========================================================================
 
     // ------------------------------------------------------------- CONFIG ----
-    // Il testo dell'avviso contiene una di queste (minuscolo).
-    var DPF_KEYWORDS = ['accumulo pm in dpf', 'particolato diesel', 'accumulo pm', 'in dpf'];
-
-    // Sopra questa lunghezza di testo, l'elemento e' la schermata di DETTAGLIO
-    // (non una riga di lista): in quel caso provo il back e poi nascondo.
-    var DETAIL_TEXT_LEN = 80;
-
-    // Ogni quanto ripassare tutti i documenti (ms).
-    var SWEEP_MS = 1000;
+    var TITLE = 'accumulo pm in dpf';       // titolo esatto (minuscolo)
+    var BODY_TXT = 'la sostanza particolata'; // inizio del testo di dettaglio
+    var SWEEP_MS = 800;
 
     // ------------------------------------------------------------ utility ----
     function lc(s) {
         return ('' + (s || '')).toLowerCase();
-    }
-
-    function matchText(t) {
-        for (var i = 0; i < DPF_KEYWORDS.length; i++) {
-            if (DPF_KEYWORDS[i] && t.indexOf(DPF_KEYWORDS[i]) !== -1) return DPF_KEYWORDS[i];
-        }
-        return null;
     }
 
     function inXss(el) {
@@ -56,7 +42,20 @@
             (c ? ('.' + c.split(' ').join('.')) : '');
     }
 
-    // Raccoglie il documento principale + tutti gli iframe accessibili (ricorsivo).
+    function isVisible(el) {
+        try {
+            var r = el.getBoundingClientRect();
+            if (!(r.width > 0 && r.height > 0)) return false;
+            var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+            var cs = win.getComputedStyle(el);
+            if (cs && (cs.display === 'none' || cs.visibility === 'hidden')) return false;
+            return true;
+        } catch (e) {
+            return true;
+        }
+    }
+
+    // Documento principale + eventuali iframe accessibili (qui di solito 1).
     function collectDocs() {
         var docs = [];
         function walk(doc, depth) {
@@ -73,7 +72,7 @@
                 try {
                     d = ifr[i].contentDocument || (ifr[i].contentWindow && ifr[i].contentWindow.document);
                 } catch (e) {
-                    d = null; // cross-origin: non accessibile
+                    d = null;
                 }
                 if (d) walk(d, depth + 1);
             }
@@ -83,75 +82,63 @@
         return docs;
     }
 
-    // Elemento piu' "stretto" che contiene il testo DPF, in un documento.
-    function findBest(doc) {
-        var all, i, el, t, best = null, bestLen = 1e9, kw = null;
+    // Elementi "stretti" che contengono il titolo: contengono la frase ma NESSUN
+    // figlio la contiene (cosi' non prendo BODY o grossi contenitori).
+    function tightWrappers(doc) {
+        var all, i, el, kids, j, childHas, out = [];
         try {
             all = doc.getElementsByTagName('*');
         } catch (e) {
-            return null;
+            return out;
         }
         for (i = 0; i < all.length; i++) {
             el = all[i];
             if (inXss(el)) continue;
-            try {
-                if (el.getAttribute && el.getAttribute('data-dpf-hidden') === '1') continue;
-            } catch (e) {
-            }
-            t = lc(el.textContent);
-            if (!t) continue;
-            var m = matchText(t);
-            if (m && t.length < bestLen) {
-                bestLen = t.length;
-                best = el;
-                kw = m;
-            }
-        }
-        if (best) window.__dpfBestLen = bestLen;
-        return best ? {el: best, len: bestLen, kw: kw} : null;
-    }
-
-    function fireClick(el) {
-        try {
-            var types = ['mousedown', 'mouseup', 'click'], k, doc = el.ownerDocument || topDocument;
-            for (k = 0; k < types.length; k++) {
-                var ev = doc.createEvent('MouseEvents');
-                ev.initMouseEvent(types[k], true, true, doc.defaultView || window,
-                    1, 0, 0, 0, 0, false, false, false, false, 0, null);
-                el.dispatchEvent(ev);
-            }
-            return true;
-        } catch (e) {
-            return false;
-        }
-    }
-
-    function clickBackIn(doc) {
-        var all, i, el, sig, re = /back|return|prev|chevron|arrow|left|close|dismiss|exit/;
-        try {
-            all = doc.getElementsByTagName('*');
-        } catch (e) {
-            return false;
-        }
-        for (i = 0; i < all.length; i++) {
-            el = all[i];
-            if (inXss(el)) continue;
-            sig = lc(el.className) + ' ' + lc(el.id);
-            try {
-                sig += ' ' + lc(el.getAttribute('data-id') || '') + ' ' + lc(el.getAttribute('role') || '');
-            } catch (e) {
-            }
-            if (re.test(sig)) {
-                if (fireClick(el)) {
-                    window.__dpfBackHit = describe(el);
-                    return true;
+            if (lc(el.textContent).indexOf(TITLE) === -1) continue;
+            childHas = false;
+            kids = el.children || [];
+            for (j = 0; j < kids.length; j++) {
+                if (lc(kids[j].textContent).indexOf(TITLE) !== -1) {
+                    childHas = true;
+                    break;
                 }
             }
+            if (!childHas) out.push(el);
         }
-        return false;
+        return out;
+    }
+
+    function rowAncestor(el) {
+        var p = el, guard = 0, tag, c;
+        while (p && p.nodeType === 1 && guard < 6) {
+            tag = (p.tagName || '').toLowerCase();
+            c = lc(p.className);
+            if (tag === 'li' || /listitem|list-item|row|cell/.test(c)) return p;
+            p = p.parentNode;
+            guard++;
+        }
+        return null;
+    }
+
+    // Vista di dettaglio: risale finche' trova un contenitore (non body/html) che
+    // contiene ANCHE il testo lungo del dettaglio.
+    function detailAncestor(el) {
+        var p = el, guard = 0, tag;
+        while (p && p.nodeType === 1 && guard < 10) {
+            tag = (p.tagName || '').toLowerCase();
+            if (tag !== 'body' && tag !== 'html') {
+                if (lc(p.textContent).indexOf(BODY_TXT) !== -1) return p;
+            }
+            p = p.parentNode;
+            guard++;
+        }
+        return null;
     }
 
     function hide(el) {
+        if (!el) return false;
+        var tag = (el.tagName || '').toLowerCase();
+        if (tag === 'body' || tag === 'html') return false; // mai nascondere tutto
         try {
             el.setAttribute('data-dpf-hidden', '1');
         } catch (e) {
@@ -164,33 +151,36 @@
             el.style.visibility = 'hidden';
         } catch (e) {
         }
+        window.__dpfLastHidden = describe(el);
+        return true;
     }
 
-    // Sale ai genitori finche' il testo resta corto e ancora "DPF": nasconde la
-    // riga intera della lista (icona + testo) senza toccare il resto.
-    function hideRow(el) {
-        var target = el, p = el.parentNode, guard = 0;
-        while (p && p.nodeType === 1 && guard < 6) {
-            var t = lc(p.textContent);
-            if (t.length <= DETAIL_TEXT_LEN && matchText(t) && !inXss(p)) {
-                target = p;
-                p = p.parentNode;
-                guard++;
-            } else {
-                break;
+    function process() {
+        updateStatus();
+        if (!window.__dpfOn) return;
+        var docs = collectDocs(), d, ws, i, w, target, did = 0;
+        for (d = 0; d < docs.length; d++) {
+            ws = tightWrappers(docs[d]);
+            for (i = 0; i < ws.length; i++) {
+                w = ws[i];
+                if (!isVisible(w)) continue;              // solo cio' che si vede
+                window.__dpfLastMatch = describe(w);
+                target = rowAncestor(w) || detailAncestor(w) || w;
+                if (hide(target)) did++;
             }
         }
-        hide(target);
-        window.__dpfLastHidden = describe(target);
+        if (did) {
+            window.__dpfCount = (window.__dpfCount || 0) + did;
+            window.__dpfFound = true;
+        }
+        updateStatus();
     }
 
-    // Riquadro di stato sempre visibile (per leggere/fotografare la diagnosi
-    // senza dover premere nulla). Ha classe 'xss-' cosi' il filtro lo ignora.
+    // ------------------------------------------------ barra di stato/diagnosi ---
     function ensureStatus() {
         if (window.__dpfStatusEl && window.__dpfStatusEl.parentNode) return window.__dpfStatusEl;
-        var el;
         try {
-            el = topDocument.createElement('div');
+            var el = topDocument.createElement('div');
             el.className = 'xss-status';
             (topDocument.body || topDocument.documentElement).appendChild(el);
             window.__dpfStatusEl = el;
@@ -204,69 +194,12 @@
         if (!el) return;
         var s = 'DPF ' + (window.__dpfOn ? 'ON' : 'OFF') +
             ' | docs:' + (window.__dpfDocCount || 0) +
-            ' | trovato:' + (window.__dpfFound ? 'SI' : 'NO') +
-            ' | azioni:' + (window.__dpfCount || 0) +
-            ' | match: ' + (window.__dpfLastMatch || '-');
+            ' | nascosti:' + (window.__dpfCount || 0) +
+            ' | ultima riga: ' + (window.__dpfLastHidden || '-');
         try {
             el.innerHTML = s;
         } catch (e) {
         }
-    }
-
-    function process() {
-        if (!window.__dpfOn) {
-            updateStatus();
-            return;
-        }
-        var docs = collectDocs(), d, found = false;
-        for (d = 0; d < docs.length; d++) {
-            var b = findBest(docs[d]);
-            if (!b) continue;
-            found = true;
-            window.__dpfLastMatch = describe(b.el) + ' [' + b.kw + '] len=' + b.len;
-            if (b.len > DETAIL_TEXT_LEN) {
-                // schermata di dettaglio: esci, poi nascondi in fallback
-                if (!clickBackIn(docs[d])) hide(b.el);
-            } else {
-                // riga di lista: nascondi la riga
-                hideRow(b.el);
-            }
-            window.__dpfCount = (window.__dpfCount || 0) + 1;
-        }
-        window.__dpfFound = found;
-        updateStatus();
-    }
-
-    function installObservers() {
-        var docs = collectDocs(), d;
-        var Obs = window.MutationObserver || window.WebKitMutationObserver;
-        if (!Obs) return;
-        for (d = 0; d < docs.length; d++) {
-            (function (doc) {
-                if (!doc.__dpfObserved) {
-                    try {
-                        var mo = new Obs(function () {
-                            setTimeout(process, 60);
-                        });
-                        mo.observe(doc.body || doc.documentElement, {childList: true, subtree: true});
-                        doc.__dpfObserved = true;
-                    } catch (e) {
-                    }
-                }
-            })(docs[d]);
-        }
-    }
-
-    function installFilter() {
-        if (window.__dpfInstalled) return;
-        window.__dpfInstalled = true;
-        if (window.__dpfOn === undefined) window.__dpfOn = true;
-        window.__dpfSweep = setInterval(function () {
-            installObservers(); // gli iframe possono comparire dopo
-            process();
-        }, SWEEP_MS);
-        installObservers();
-        process();
     }
 
     // ---------------------------------------------------------- menu XSS ----
@@ -295,22 +228,19 @@
     }
 
     function forceNow(view) {
-        xssLog(view, 'cerco e rimuovo l\'avviso ora...', 'xss-hint');
+        xssLog(view, 'rimuovo ora...', 'xss-hint');
         process();
-        xssLog(view, 'documenti trovati: ' + (window.__dpfDocCount || 0));
-        xssLog(view, 'trovato: ' + (window.__dpfFound ? 'SI' : 'NO'));
-        xssLog(view, 'match: ' + (window.__dpfLastMatch || '(nessuno)'), 'xss-cmd');
+        xssLog(view, 'nascosti totali: ' + (window.__dpfCount || 0));
+        xssLog(view, 'ultimo match: ' + (window.__dpfLastMatch || '(nessuno)'), 'xss-cmd');
     }
 
     function showInfo(view) {
-        xssLog(view, 'remove: ' + (window.__dpfOn ? 'ON' : 'OFF') + ' | azioni: ' + (window.__dpfCount || 0));
-        xssLog(view, 'documenti (iframe inclusi): ' + (window.__dpfDocCount || 0));
+        xssLog(view, 'remove: ' + (window.__dpfOn ? 'ON' : 'OFF'));
+        xssLog(view, 'documenti: ' + (window.__dpfDocCount || 0) + ' | nascosti: ' + (window.__dpfCount || 0));
         xssLog(view, 'ultimo match:', 'xss-hint');
         xssLog(view, window.__dpfLastMatch || '(nessuno)', 'xss-cmd');
         xssLog(view, 'ultima riga nascosta:', 'xss-hint');
         xssLog(view, window.__dpfLastHidden || '(nessuna)', 'xss-cmd');
-        xssLog(view, 'back cliccato:', 'xss-hint');
-        xssLog(view, window.__dpfBackHit || '(nessuno)', 'xss-cmd');
     }
 
     function createMenu() {
@@ -322,11 +252,9 @@
         view.className = 'xss-view';
         wrapper.appendChild(actions);
         wrapper.appendChild(view);
-
         action(actions, 'DPF remove ON/OFF', toggleFilter, view);
         action(actions, 'Rimuovi avviso ora', forceNow, view);
         action(actions, 'Info / diagnosi', showInfo, view);
-
         return wrapper;
     }
 
@@ -355,7 +283,9 @@
         }
         window.onload = function run() {
             mount();
-            installFilter();
+            window.__dpfOn = true;
+            window.__dpfSweep = setInterval(process, SWEEP_MS);
+            process();
             window.xssCssReady = true;
         };
     } else {
@@ -369,7 +299,11 @@
         if (!window.xssMounted) {
             mount();
         }
-        installFilter();
+        if (window.__dpfOn === undefined) window.__dpfOn = true;
+        if (!window.__dpfSweep) {
+            window.__dpfSweep = setInterval(process, SWEEP_MS);
+        }
+        process();
     }
 
 })(document, window, window.framework, window.log);
