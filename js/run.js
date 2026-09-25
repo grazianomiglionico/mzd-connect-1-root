@@ -138,21 +138,43 @@
     function hide(el) {
         if (!el) return false;
         var tag = (el.tagName || '').toLowerCase();
-        if (tag === 'body' || tag === 'html') return false; // mai nascondere tutto
-        try {
-            el.setAttribute('data-dpf-hidden', '1');
-        } catch (e) {
-        }
-        try {
-            el.style.display = 'none';
-        } catch (e) {
-        }
-        try {
-            el.style.visibility = 'hidden';
-        } catch (e) {
-        }
+        if (tag === 'body' || tag === 'html') return false;
         window.__dpfLastHidden = describe(el);
+        try {
+            if (el.parentNode) el.parentNode.removeChild(el);
+        } catch (e) {
+            try { el.style.display = 'none'; } catch (e2) {}
+        }
         return true;
+    }
+
+    function fixBadge(docs) {
+        for (var d = 0; d < docs.length; d++) {
+            var all;
+            try { all = docs[d].getElementsByTagName('*'); } catch (e) { continue; }
+            for (var i = 0; i < all.length; i++) {
+                var el = all[i];
+                if (inXss(el)) continue;
+                var txt = '';
+                try { txt = el.textContent || ''; } catch (e) { continue; }
+                var trimmed = txt.replace(/\s+/g, ' ').trim();
+                if (/^2\s*$/.test(trimmed) || trimmed === '2') {
+                    var ctx = '';
+                    try {
+                        var p = el.parentNode;
+                        while (p && p.nodeType === 1) {
+                            ctx = (p.textContent || '').toLowerCase();
+                            if (ctx.indexOf('avvis') !== -1) {
+                                el.textContent = '1';
+                                window.__dpfBadgeFixed = true;
+                                return;
+                            }
+                            p = p.parentNode;
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
     }
 
     function process() {
@@ -163,7 +185,7 @@
             ws = tightWrappers(docs[d]);
             for (i = 0; i < ws.length; i++) {
                 w = ws[i];
-                if (!isVisible(w)) continue;              // solo cio' che si vede
+                if (!isVisible(w)) continue;
                 window.__dpfLastMatch = describe(w);
                 target = rowAncestor(w) || detailAncestor(w) || w;
                 if (hide(target)) did++;
@@ -173,6 +195,7 @@
             window.__dpfCount = (window.__dpfCount || 0) + did;
             window.__dpfFound = true;
         }
+        if (!window.__dpfBadgeFixed) fixBadge(docs);
         updateStatus();
     }
 
@@ -194,8 +217,9 @@
         if (!el) return;
         var s = 'DPF ' + (window.__dpfOn ? 'ON' : 'OFF') +
             ' | docs:' + (window.__dpfDocCount || 0) +
-            ' | nascosti:' + (window.__dpfCount || 0) +
-            ' | ultima riga: ' + (window.__dpfLastHidden || '-');
+            ' | rimossi:' + (window.__dpfCount || 0) +
+            ' | badge:' + (window.__dpfBadgeFixed ? 'OK' : '-') +
+            ' | ultima: ' + (window.__dpfLastHidden || '-');
         try {
             el.innerHTML = s;
         } catch (e) {
@@ -230,16 +254,16 @@
     function forceNow(view) {
         xssLog(view, 'rimuovo ora...', 'xss-hint');
         process();
-        xssLog(view, 'nascosti totali: ' + (window.__dpfCount || 0));
+        xssLog(view, 'rimossi totali: ' + (window.__dpfCount || 0));
         xssLog(view, 'ultimo match: ' + (window.__dpfLastMatch || '(nessuno)'), 'xss-cmd');
     }
 
     function showInfo(view) {
         xssLog(view, 'remove: ' + (window.__dpfOn ? 'ON' : 'OFF'));
-        xssLog(view, 'documenti: ' + (window.__dpfDocCount || 0) + ' | nascosti: ' + (window.__dpfCount || 0));
+        xssLog(view, 'documenti: ' + (window.__dpfDocCount || 0) + ' | rimossi: ' + (window.__dpfCount || 0) + ' | badge: ' + (window.__dpfBadgeFixed ? 'OK' : '-'));
         xssLog(view, 'ultimo match:', 'xss-hint');
         xssLog(view, window.__dpfLastMatch || '(nessuno)', 'xss-cmd');
-        xssLog(view, 'ultima riga nascosta:', 'xss-hint');
+        xssLog(view, 'ultima riga rimossa:', 'xss-hint');
         xssLog(view, window.__dpfLastHidden || '(nessuna)', 'xss-cmd');
     }
 
