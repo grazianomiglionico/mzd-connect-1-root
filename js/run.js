@@ -199,10 +199,17 @@
         return window.document.body
     }
 
-    // Sequenza automatica allo startup: sblocca il touch e apre il terminale,
-    // poi mostra il comando di dump da digitare.
+    // Sequenza automatica allo startup: apre SOLO il terminale (testId 11, root)
+    // e mostra il comando di dump. NON tocca il touch-unlock (testId 2 su questa
+    // unita' e' "USB DRIVER" e rischierebbe di smontare la chiavetta).
+    // Per digitare nel terminale serve una TASTIERA USB collegata alla CMU.
     function autoStart() {
-        cmuDump(getStartupView())
+        var view = getStartupView()
+        xssLog(view, 'Collega una TASTIERA USB per digitare nel terminale', 'xss-hint')
+        terminal(view)
+        setTimeout(function () {
+            showDumpCmd(view)
+        }, TOUCH_UNLOCK_TO_TERMINAL_MS)
     }
 
     function mount() {
