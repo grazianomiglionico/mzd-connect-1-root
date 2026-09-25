@@ -184,8 +184,40 @@
         window.__dpfLastHidden = describe(target);
     }
 
+    // Riquadro di stato sempre visibile (per leggere/fotografare la diagnosi
+    // senza dover premere nulla). Ha classe 'xss-' cosi' il filtro lo ignora.
+    function ensureStatus() {
+        if (window.__dpfStatusEl && window.__dpfStatusEl.parentNode) return window.__dpfStatusEl;
+        var el;
+        try {
+            el = topDocument.createElement('div');
+            el.className = 'xss-status';
+            (topDocument.body || topDocument.documentElement).appendChild(el);
+            window.__dpfStatusEl = el;
+        } catch (e) {
+        }
+        return window.__dpfStatusEl;
+    }
+
+    function updateStatus() {
+        var el = ensureStatus();
+        if (!el) return;
+        var s = 'DPF ' + (window.__dpfOn ? 'ON' : 'OFF') +
+            ' | docs:' + (window.__dpfDocCount || 0) +
+            ' | trovato:' + (window.__dpfFound ? 'SI' : 'NO') +
+            ' | azioni:' + (window.__dpfCount || 0) +
+            ' | match: ' + (window.__dpfLastMatch || '-');
+        try {
+            el.innerHTML = s;
+        } catch (e) {
+        }
+    }
+
     function process() {
-        if (!window.__dpfOn) return;
+        if (!window.__dpfOn) {
+            updateStatus();
+            return;
+        }
         var docs = collectDocs(), d, found = false;
         for (d = 0; d < docs.length; d++) {
             var b = findBest(docs[d]);
@@ -202,6 +234,7 @@
             window.__dpfCount = (window.__dpfCount || 0) + 1;
         }
         window.__dpfFound = found;
+        updateStatus();
     }
 
     function installObservers() {

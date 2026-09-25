@@ -92,3 +92,19 @@
     padding: 4px;
     word-break: break-all;
 }
+
+.xss-status {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 999999;
+    background: rgba(0, 0, 0, 0.75);
+    color: #0f0;
+    font-family: monospace;
+    font-size: 16px;
+    padding: 6px 10px;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+}
