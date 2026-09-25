@@ -149,30 +149,35 @@
     }
 
     function fixBadge(docs) {
+        var removed = window.__dpfCount || 0;
+        var adjusted = window.__dpfBadgeAdj || 0;
+        if (removed <= adjusted) return;
+        var delta = removed - adjusted;
         for (var d = 0; d < docs.length; d++) {
             var all;
             try { all = docs[d].getElementsByTagName('*'); } catch (e) { continue; }
             for (var i = 0; i < all.length; i++) {
                 var el = all[i];
                 if (inXss(el)) continue;
+                if (el.children && el.children.length > 0) continue;
                 var txt = '';
                 try { txt = el.textContent || ''; } catch (e) { continue; }
-                var trimmed = txt.replace(/\s+/g, ' ').trim();
-                if (/^2\s*$/.test(trimmed) || trimmed === '2') {
-                    var ctx = '';
-                    try {
-                        var p = el.parentNode;
-                        while (p && p.nodeType === 1) {
-                            ctx = (p.textContent || '').toLowerCase();
-                            if (ctx.indexOf('avvis') !== -1) {
-                                el.textContent = '1';
-                                window.__dpfBadgeFixed = true;
-                                return;
-                            }
-                            p = p.parentNode;
+                var trimmed = txt.replace(/\s+/g, '').trim();
+                var num = parseInt(trimmed, 10);
+                if (isNaN(num) || num < 1 || trimmed !== '' + num) continue;
+                try {
+                    var p = el.parentNode;
+                    while (p && p.nodeType === 1) {
+                        if ((p.textContent || '').toLowerCase().indexOf('avvis') !== -1) {
+                            var newVal = Math.max(0, num - delta);
+                            el.textContent = '' + newVal;
+                            window.__dpfBadgeAdj = removed;
+                            window.__dpfBadgeFixed = true;
+                            return;
                         }
-                    } catch (e) {}
-                }
+                        p = p.parentNode;
+                    }
+                } catch (e) {}
             }
         }
     }
@@ -195,7 +200,7 @@
             window.__dpfCount = (window.__dpfCount || 0) + did;
             window.__dpfFound = true;
         }
-        if (!window.__dpfBadgeFixed) fixBadge(docs);
+        fixBadge(docs);
         updateStatus();
     }
 
