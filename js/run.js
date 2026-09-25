@@ -33,12 +33,10 @@
     // Altrimenti la UI in WebKit non puo' digitare nel terminale, quindi il
     // comando va eseguito una volta a mano (poi il dump e' interamente automatico).
     function cmuDump(view) {
-        xssLog(view, 'CMU full dump: apro il terminale...')
+        xssLog(view, 'CMU full dump: comando da digitare nel terminale:', 'xss-hint')
+        xssLog(view, CMU_DUMP_CMD, 'xss-cmd')
+        xssLog(view, 'apro il terminale...')
         terminal(view)
-        setTimeout(function () {
-            xssLog(view, 'Se l\'autorun non parte da solo, esegui nel terminale:', 'xss-hint')
-            xssLog(view, CMU_DUMP_CMD, 'xss-cmd')
-        }, 15000)
     }
 
     function UIxssLog(view) {
