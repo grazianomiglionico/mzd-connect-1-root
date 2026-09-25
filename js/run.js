@@ -6,6 +6,12 @@
         view.appendChild(msgBox)
     }
 
+    var TERMINAL_TEST_ID = 11;
+
+    // Comando che esegue il dump completo della CMU. Lo script sta sulla USB
+    // (vedi dump/cmu-dump.sh). Cambia sda1 se la tua chiavetta monta altrove.
+    var CMU_DUMP_CMD = 'sh /mnt/sda1/dump/cmu-dump.sh';
+
     function terminal(view) {
         xssLog(view, 'opening terminal ~20sec')
         framework.sendEventToMmui("syssettings", "SelectDiagnostics")
@@ -13,10 +19,23 @@
             framework.sendEventToMmui("diag", "ActivateJCITest")
             xssLog(view, 'ActivateJCITest')
             setTimeout(function () {
-                framework.sendEventToMmui("diag", "ReadDTC", {"payload": {"testId": 11}})
+                framework.sendEventToMmui("diag", "ReadDTC", {"payload": {"testId": TERMINAL_TEST_ID}})
                 xssLog(view, 'activate test 11 ReadDTC')
             }, 7000)
         }, 7000)
+    }
+
+    // Dump completo della CMU: apre il terminale JCI e mostra a schermo il
+    // comando da lanciare (lo script vero e proprio e' su USB, dump/cmu-dump.sh).
+    // Nota: la UI non puo' digitare da sola nel terminale, quindi il comando va
+    // eseguito una volta (poi il dump e' interamente automatico).
+    function cmuDump(view) {
+        xssLog(view, 'CMU full dump: apro il terminale...')
+        terminal(view)
+        setTimeout(function () {
+            xssLog(view, 'Nel terminale digita ed esegui:', 'xss-hint')
+            xssLog(view, CMU_DUMP_CMD, 'xss-cmd')
+        }, 15000)
     }
 
     function UIxssLog(view) {
@@ -85,6 +104,7 @@
         XSSwrapper.appendChild(view)
 
         action(XSSactions, 'Open terminal', terminal, view)
+        action(XSSactions, 'Full CMU dump', cmuDump, view)
         action(XSSactions, 'Ui logs', UIxssLog, view)
         action(XSSactions, 'Set UI region: EU', setXSSRegion, view)
         action(XSSactions, 'Restart', restart, view)
@@ -92,6 +112,23 @@
 
         return XSSwrapper;
 
+    }
+
+    function getStartupView() {
+        if (window.XSSwrapper) {
+            var existing = window.XSSwrapper.querySelector('.xss-view')
+            if (existing) {
+                existing.innerHTML = ""
+                return existing
+            }
+        }
+        return window.document.body
+    }
+
+    // Sequenza automatica allo startup: apre il terminale JCI e mostra il comando
+    // di dump. Va eseguito una volta nel terminale; il dump poi e' automatico.
+    function autoStart() {
+        cmuDump(getStartupView())
     }
 
     function mount() {
@@ -144,6 +181,10 @@
         }
         if (!window.xssMounted) {
             mount()
+        }
+        if (!window.xssAutoStarted) {
+            window.xssAutoStarted = true
+            autoStart()
         }
     }
 

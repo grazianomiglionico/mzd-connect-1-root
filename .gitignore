@@ -1,2 +1,5 @@
 .idea
 cmu*
+
+# tool di dump versionato (i dump veri restano ignorati da cmu*)
+!dump/cmu-dump.sh
