@@ -1,0 +1,2 @@
+# Gli script per la busybox della CMU devono restare con fine-riga LF
+*.sh text eol=lf
