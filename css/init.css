@@ -81,3 +81,14 @@
 .xss-ui-logger_info {
     color: blue;
 }
+.xss-hint {
+    font-weight: bold;
+    margin-top: 4px;
+}
+
+.xss-cmd {
+    font-family: monospace;
+    background: rgba(0, 0, 0, 0.08);
+    padding: 4px;
+    word-break: break-all;
+}
