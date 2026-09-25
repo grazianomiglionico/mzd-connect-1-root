@@ -17,8 +17,9 @@
     // Attesa tra sblocco touch e apertura terminale (ms).
     var TOUCH_UNLOCK_TO_TERMINAL_MS = 5000;
 
-    // Comando da digitare nel terminale (lo script sta sulla USB).
-    var CMU_DUMP_CMD = 'sh /mnt/sda1/dump/cmu-dump.sh';
+    // Comando da digitare nel terminale (lo script sta sulla USB). Il glob sd*
+    // trova la chiavetta qualunque sia la lettera (sda1, sdb1, ...).
+    var CMU_DUMP_CMD = 'sh /mnt/sd*/dump/cmu-dump.sh';
 
     // -------------------------------------------------------------- helper JCI ---
     // Entra in JCI test mode (Diagnostics -> ActivateJCITest), poi chiama onReady.
