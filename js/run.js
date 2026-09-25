@@ -135,24 +135,31 @@
         return null;
     }
 
-    function hide(el) {
+    function nuke(el) {
         if (!el) return false;
         var tag = (el.tagName || '').toLowerCase();
         if (tag === 'body' || tag === 'html') return false;
+        try { if (el.getAttribute('data-dpf-zapped')) return false; } catch (e) {}
+        try { el.setAttribute('data-dpf-zapped', '1'); } catch (e) {}
         window.__dpfLastHidden = describe(el);
+        try { el.outerHTML = ''; return true; } catch (e) {}
+        try { if (el.parentNode) { el.parentNode.removeChild(el); return true; } } catch (e) {}
         try {
-            if (el.parentNode) el.parentNode.removeChild(el);
-        } catch (e) {
-            try { el.style.display = 'none'; } catch (e2) {}
-        }
+            el.style.height = '0';
+            el.style.maxHeight = '0';
+            el.style.minHeight = '0';
+            el.style.overflow = 'hidden';
+            el.style.padding = '0';
+            el.style.margin = '0';
+            el.style.border = 'none';
+            el.style.lineHeight = '0';
+            el.style.fontSize = '0';
+            el.style.opacity = '0';
+        } catch (e) {}
         return true;
     }
 
     function fixBadge(docs) {
-        var removed = window.__dpfCount || 0;
-        var adjusted = window.__dpfBadgeAdj || 0;
-        if (removed <= adjusted) return;
-        var delta = removed - adjusted;
         for (var d = 0; d < docs.length; d++) {
             var all;
             try { all = docs[d].getElementsByTagName('*'); } catch (e) { continue; }
@@ -160,6 +167,7 @@
                 var el = all[i];
                 if (inXss(el)) continue;
                 if (el.children && el.children.length > 0) continue;
+                try { if (el.getAttribute('data-dpf-badge')) continue; } catch (e) {}
                 var txt = '';
                 try { txt = el.textContent || ''; } catch (e) { continue; }
                 var trimmed = txt.replace(/\s+/g, '').trim();
@@ -169,9 +177,8 @@
                     var p = el.parentNode;
                     while (p && p.nodeType === 1) {
                         if ((p.textContent || '').toLowerCase().indexOf('avvis') !== -1) {
-                            var newVal = Math.max(0, num - delta);
-                            el.textContent = '' + newVal;
-                            window.__dpfBadgeAdj = removed;
+                            el.textContent = '' + Math.max(0, num - 1);
+                            try { el.setAttribute('data-dpf-badge', '1'); } catch (e2) {}
                             window.__dpfBadgeFixed = true;
                             return;
                         }
@@ -193,13 +200,10 @@
                 if (!isVisible(w)) continue;
                 window.__dpfLastMatch = describe(w);
                 target = rowAncestor(w) || detailAncestor(w) || w;
-                if (hide(target)) did++;
+                if (nuke(target)) did++;
             }
         }
-        if (did) {
-            window.__dpfCount = (window.__dpfCount || 0) + did;
-            window.__dpfFound = true;
-        }
+        if (did) window.__dpfCount = (window.__dpfCount || 0) + did;
         fixBadge(docs);
         updateStatus();
     }
@@ -259,7 +263,7 @@
     function forceNow(view) {
         xssLog(view, 'rimuovo ora...', 'xss-hint');
         process();
-        xssLog(view, 'rimossi totali: ' + (window.__dpfCount || 0));
+        xssLog(view, 'zappati: ' + (window.__dpfCount || 0));
         xssLog(view, 'ultimo match: ' + (window.__dpfLastMatch || '(nessuno)'), 'xss-cmd');
     }
 
