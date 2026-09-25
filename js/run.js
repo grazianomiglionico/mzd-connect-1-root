@@ -1,41 +1,41 @@
-(function (document, window, framework, log) {
+(function (topDocument, window, framework, log) {
     // =========================================================================
-    // Chiude automaticamente la schermata "Guida agli avvisi" della CMU quando
-    // mostra l'avviso DPF ("Accumulo PM in DPF").
+    // Rimuove/chiude l'avviso "Accumulo PM in DPF" dalla CMU.
     //
-    // Testo reale dell'avviso:
-    //   "DPF Accumulo PM in DPF
-    //    La sostanza particolata (PM) raccolta nel filtro particolato diesel
-    //    (DPF) ha superato il limite regolare. Guidare per 10-15 minuti ..."
+    // L'HMI carica ogni app (compresa "Avvisi di guida") in un IFRAME interno.
+    // Questo script cerca l'avviso nel documento principale E dentro TUTTI gli
+    // iframe (ricorsivamente), e:
+    //   - nella LISTA avvisi: nasconde la riga "Accumulo PM in DPF"
+    //   - nella schermata di dettaglio: prova a uscirne (back) e in fallback la
+    //     nasconde.
     //
-    // NON e' un popup ma una SCHERMATA (app "Guida agli avvisi"): quindi non la
-    // nascondo (lascerebbe lo schermo vuoto), ma provo a USCIRNE simulando il
-    // "back" (la freccia a sinistra), tornando alla schermata precedente.
-    //
-    // Iniettato all'avvio dell'HMI: NON servono touch, terminale, tastiera, dump.
-    // Agisce solo sul messaggio a schermo, non sulla spia cruscotto ne' sull'ECU.
+    // Iniettato all'avvio via MP3: nessun touch/terminale/tastiera/dump.
+    // Agisce SOLO sulla grafica dell'HMI (nessun file di sistema): non puo'
+    // danneggiare nulla, si ripristina al riavvio. Non tocca la spia cruscotto
+    // ne' la centralina.
     // =========================================================================
 
     // ------------------------------------------------------------- CONFIG ----
-    // La schermata e' "DPF" se il suo testo contiene una di queste (minuscolo).
-    var DPF_KEYWORDS = ['accumulo pm in dpf', 'particolato diesel', 'in dpf'];
+    // Il testo dell'avviso contiene una di queste (minuscolo).
+    var DPF_KEYWORDS = ['accumulo pm in dpf', 'particolato diesel', 'accumulo pm', 'in dpf'];
 
-    // Se il "back" non funziona, in fallback nasconde comunque la schermata.
-    var HIDE_FALLBACK = true;
+    // Sopra questa lunghezza di testo, l'elemento e' la schermata di DETTAGLIO
+    // (non una riga di lista): in quel caso provo il back e poi nascondo.
+    var DETAIL_TEXT_LEN = 80;
 
-    // Quante volte ritentare la chiusura (l'avviso a volte ricompare).
-    var SWEEP_MS = 1200;
+    // Ogni quanto ripassare tutti i documenti (ms).
+    var SWEEP_MS = 1000;
 
     // ------------------------------------------------------------ utility ----
     function lc(s) {
         return ('' + (s || '')).toLowerCase();
     }
 
-    function xssLog(view, msg, className) {
-        var b = document.createElement("div");
-        b.className = className;
-        b.innerHTML = msg;
-        view.appendChild(b);
+    function matchText(t) {
+        for (var i = 0; i < DPF_KEYWORDS.length; i++) {
+            if (DPF_KEYWORDS[i] && t.indexOf(DPF_KEYWORDS[i]) !== -1) return DPF_KEYWORDS[i];
+        }
+        return null;
     }
 
     function inXss(el) {
@@ -44,15 +44,6 @@
             el = el.parentNode;
         }
         return false;
-    }
-
-    function matchKeyword(el) {
-        var t = lc(el.textContent);
-        if (!t) return null;
-        for (var i = 0; i < DPF_KEYWORDS.length; i++) {
-            if (DPF_KEYWORDS[i] && t.indexOf(DPF_KEYWORDS[i]) !== -1) return DPF_KEYWORDS[i];
-        }
-        return null;
     }
 
     function describe(el) {
@@ -65,108 +56,171 @@
             (c ? ('.' + c.split(' ').join('.')) : '');
     }
 
+    // Raccoglie il documento principale + tutti gli iframe accessibili (ricorsivo).
+    function collectDocs() {
+        var docs = [];
+        function walk(doc, depth) {
+            if (!doc || depth > 6) return;
+            docs.push(doc);
+            var ifr;
+            try {
+                ifr = doc.getElementsByTagName('iframe');
+            } catch (e) {
+                return;
+            }
+            for (var i = 0; i < ifr.length; i++) {
+                var d = null;
+                try {
+                    d = ifr[i].contentDocument || (ifr[i].contentWindow && ifr[i].contentWindow.document);
+                } catch (e) {
+                    d = null; // cross-origin: non accessibile
+                }
+                if (d) walk(d, depth + 1);
+            }
+        }
+        walk(topDocument, 0);
+        window.__dpfDocCount = docs.length;
+        return docs;
+    }
+
+    // Elemento piu' "stretto" che contiene il testo DPF, in un documento.
+    function findBest(doc) {
+        var all, i, el, t, best = null, bestLen = 1e9, kw = null;
+        try {
+            all = doc.getElementsByTagName('*');
+        } catch (e) {
+            return null;
+        }
+        for (i = 0; i < all.length; i++) {
+            el = all[i];
+            if (inXss(el)) continue;
+            try {
+                if (el.getAttribute && el.getAttribute('data-dpf-hidden') === '1') continue;
+            } catch (e) {
+            }
+            t = lc(el.textContent);
+            if (!t) continue;
+            var m = matchText(t);
+            if (m && t.length < bestLen) {
+                bestLen = t.length;
+                best = el;
+                kw = m;
+            }
+        }
+        if (best) window.__dpfBestLen = bestLen;
+        return best ? {el: best, len: bestLen, kw: kw} : null;
+    }
+
     function fireClick(el) {
         try {
-            ['mousedown', 'mouseup', 'click'].forEach(function (type) {
-                var ev = document.createEvent('MouseEvents');
-                ev.initMouseEvent(type, true, true, window, 1, 0, 0, 0, 0,
-                    false, false, false, false, 0, null);
+            var types = ['mousedown', 'mouseup', 'click'], k, doc = el.ownerDocument || topDocument;
+            for (k = 0; k < types.length; k++) {
+                var ev = doc.createEvent('MouseEvents');
+                ev.initMouseEvent(types[k], true, true, doc.defaultView || window,
+                    1, 0, 0, 0, 0, false, false, false, false, 0, null);
                 el.dispatchEvent(ev);
-            });
+            }
             return true;
         } catch (e) {
             return false;
         }
     }
 
-    // Cerca DENTRO la schermata dell'avviso un controllo "back"/uscita e lo clicca.
-    function clickBack(viewEl) {
-        var candidates = viewEl.querySelectorAll('*');
-        var i, el, sig;
-        var re = /back|return|prev|chevron|arrow|left|close|dismiss|home|exit/;
-        for (i = 0; i < candidates.length; i++) {
-            el = candidates[i];
+    function clickBackIn(doc) {
+        var all, i, el, sig, re = /back|return|prev|chevron|arrow|left|close|dismiss|exit/;
+        try {
+            all = doc.getElementsByTagName('*');
+        } catch (e) {
+            return false;
+        }
+        for (i = 0; i < all.length; i++) {
+            el = all[i];
+            if (inXss(el)) continue;
             sig = lc(el.className) + ' ' + lc(el.id);
             try {
                 sig += ' ' + lc(el.getAttribute('data-id') || '') + ' ' + lc(el.getAttribute('role') || '');
             } catch (e) {
             }
             if (re.test(sig)) {
-                window.__dpfBackHit = describe(el);
-                if (fireClick(el)) return true;
+                if (fireClick(el)) {
+                    window.__dpfBackHit = describe(el);
+                    return true;
+                }
             }
         }
         return false;
     }
 
-    // Tentativi via framework (best-effort, tutti in try/catch).
-    function frameworkBack() {
-        var tried = [];
-        function t(fn, label) {
-            try {
-                fn();
-                tried.push(label);
-            } catch (e) {
-            }
+    function hide(el) {
+        try {
+            el.setAttribute('data-dpf-hidden', '1');
+        } catch (e) {
         }
-        t(function () { framework.sendEventToMmui("home", "SelectHome"); }, 'home/SelectHome');
-        t(function () { framework.sendEventToMmui("System", "back"); }, 'System/back');
-        t(function () { framework.routeMmuiMsg && framework.routeMmuiMsg("System", "back"); }, 'routeMmuiMsg back');
-        t(function () { framework.goBackInHistory && framework.goBackInHistory(); }, 'goBackInHistory');
-        window.__dpfFwTried = tried.join(', ');
-    }
-
-    function handleView(el) {
-        if (!el || el.nodeType !== 1) return false;
-        if (inXss(el)) return false;
-        var kw = matchKeyword(el);
-        if (!kw) return false;
-
-        window.__dpfLastMatch = describe(el) + ' [' + kw + ']';
-        if (!window.__dpfOn) return true;
-
-        // 1) prova a cliccare il "back" dentro la schermata
-        var done = clickBack(el);
-        // 2) prova le nav via framework
-        frameworkBack();
-
-        // 3) fallback: nascondi la schermata
-        if (!done && HIDE_FALLBACK) {
-            try {
-                el.setAttribute('data-dpf-hidden', '1');
-                el.style.display = 'none';
-                el.style.visibility = 'hidden';
-                window.__dpfHiddenFallback = window.__dpfLastMatch;
-            } catch (e) {
-            }
+        try {
+            el.style.display = 'none';
+        } catch (e) {
         }
-
-        window.__dpfCount = (window.__dpfCount || 0) + 1;
-        return true;
+        try {
+            el.style.visibility = 'hidden';
+        } catch (e) {
+        }
     }
 
-    function considerNode(el) {
-        if (handleView(el)) return;
-        var tries = [150, 400, 800, 1500, 2500];
-        (function rech(i) {
-            if (i >= tries.length) return;
-            setTimeout(function () {
-                if (!handleView(el)) rech(i + 1);
-            }, tries[i]);
-        })(0);
-    }
-
-    function scanExisting() {
-        if (!document.body || !window.__dpfOn) return;
-        var kids = document.body.getElementsByTagName('*'), i, el;
-        // scansione mirata: cerca elementi il cui testo contiene le keyword
-        for (i = 0; i < kids.length; i++) {
-            el = kids[i];
-            if (el.getAttribute && el.getAttribute('data-dpf-hidden') === '1') continue;
-            if (matchKeyword(el)) {
-                handleView(el);
+    // Sale ai genitori finche' il testo resta corto e ancora "DPF": nasconde la
+    // riga intera della lista (icona + testo) senza toccare il resto.
+    function hideRow(el) {
+        var target = el, p = el.parentNode, guard = 0;
+        while (p && p.nodeType === 1 && guard < 6) {
+            var t = lc(p.textContent);
+            if (t.length <= DETAIL_TEXT_LEN && matchText(t) && !inXss(p)) {
+                target = p;
+                p = p.parentNode;
+                guard++;
+            } else {
                 break;
             }
+        }
+        hide(target);
+        window.__dpfLastHidden = describe(target);
+    }
+
+    function process() {
+        if (!window.__dpfOn) return;
+        var docs = collectDocs(), d, found = false;
+        for (d = 0; d < docs.length; d++) {
+            var b = findBest(docs[d]);
+            if (!b) continue;
+            found = true;
+            window.__dpfLastMatch = describe(b.el) + ' [' + b.kw + '] len=' + b.len;
+            if (b.len > DETAIL_TEXT_LEN) {
+                // schermata di dettaglio: esci, poi nascondi in fallback
+                if (!clickBackIn(docs[d])) hide(b.el);
+            } else {
+                // riga di lista: nascondi la riga
+                hideRow(b.el);
+            }
+            window.__dpfCount = (window.__dpfCount || 0) + 1;
+        }
+        window.__dpfFound = found;
+    }
+
+    function installObservers() {
+        var docs = collectDocs(), d;
+        var Obs = window.MutationObserver || window.WebKitMutationObserver;
+        if (!Obs) return;
+        for (d = 0; d < docs.length; d++) {
+            (function (doc) {
+                if (!doc.__dpfObserved) {
+                    try {
+                        var mo = new Obs(function () {
+                            setTimeout(process, 60);
+                        });
+                        mo.observe(doc.body || doc.documentElement, {childList: true, subtree: true});
+                        doc.__dpfObserved = true;
+                    } catch (e) {
+                    }
+                }
+            })(docs[d]);
         }
     }
 
@@ -174,31 +228,24 @@
         if (window.__dpfInstalled) return;
         window.__dpfInstalled = true;
         if (window.__dpfOn === undefined) window.__dpfOn = true;
-        try {
-            var Obs = window.MutationObserver || window.WebKitMutationObserver;
-            if (Obs) {
-                var mo = new Obs(function (muts) {
-                    var m, j, added, n;
-                    for (m = 0; m < muts.length; m++) {
-                        added = muts[m].addedNodes;
-                        for (j = 0; j < added.length; j++) {
-                            n = added[j];
-                            if (n && n.nodeType === 1) considerNode(n);
-                        }
-                    }
-                });
-                mo.observe(document.body, {childList: true, subtree: true});
-                window.__dpfObserver = mo;
-            }
-        } catch (e) {
-        }
-        window.__dpfSweep = setInterval(scanExisting, SWEEP_MS);
-        scanExisting();
+        window.__dpfSweep = setInterval(function () {
+            installObservers(); // gli iframe possono comparire dopo
+            process();
+        }, SWEEP_MS);
+        installObservers();
+        process();
     }
 
     // ---------------------------------------------------------- menu XSS ----
+    function xssLog(view, msg, className) {
+        var b = topDocument.createElement("div");
+        b.className = className;
+        b.innerHTML = msg;
+        view.appendChild(b);
+    }
+
     function action(parent, name, cb, view) {
-        var b = document.createElement("div");
+        var b = topDocument.createElement("div");
         b.innerHTML = name;
         b.className = 'xss-action';
         b.addEventListener('mousedown', function () {
@@ -210,41 +257,41 @@
 
     function toggleFilter(view) {
         window.__dpfOn = !window.__dpfOn;
-        xssLog(view, 'DPF auto-close: ' + (window.__dpfOn ? 'ON' : 'OFF'), 'xss-hint');
-        if (window.__dpfOn) scanExisting();
+        xssLog(view, 'DPF remove: ' + (window.__dpfOn ? 'ON' : 'OFF'), 'xss-hint');
+        if (window.__dpfOn) process();
     }
 
     function forceNow(view) {
-        xssLog(view, 'cerco e chiudo la schermata DPF ora...', 'xss-hint');
-        scanExisting();
-        xssLog(view, 'match: ' + (window.__dpfLastMatch || '(nessuno)'));
-        xssLog(view, 'back cliccato: ' + (window.__dpfBackHit || '(nessuno)'));
+        xssLog(view, 'cerco e rimuovo l\'avviso ora...', 'xss-hint');
+        process();
+        xssLog(view, 'documenti trovati: ' + (window.__dpfDocCount || 0));
+        xssLog(view, 'trovato: ' + (window.__dpfFound ? 'SI' : 'NO'));
+        xssLog(view, 'match: ' + (window.__dpfLastMatch || '(nessuno)'), 'xss-cmd');
     }
 
     function showInfo(view) {
-        xssLog(view, 'auto-close: ' + (window.__dpfOn ? 'ON' : 'OFF') + ' | chiusure: ' + (window.__dpfCount || 0));
+        xssLog(view, 'remove: ' + (window.__dpfOn ? 'ON' : 'OFF') + ' | azioni: ' + (window.__dpfCount || 0));
+        xssLog(view, 'documenti (iframe inclusi): ' + (window.__dpfDocCount || 0));
         xssLog(view, 'ultimo match:', 'xss-hint');
         xssLog(view, window.__dpfLastMatch || '(nessuno)', 'xss-cmd');
+        xssLog(view, 'ultima riga nascosta:', 'xss-hint');
+        xssLog(view, window.__dpfLastHidden || '(nessuna)', 'xss-cmd');
         xssLog(view, 'back cliccato:', 'xss-hint');
         xssLog(view, window.__dpfBackHit || '(nessuno)', 'xss-cmd');
-        xssLog(view, 'framework provati:', 'xss-hint');
-        xssLog(view, window.__dpfFwTried || '(nessuno)', 'xss-cmd');
-        xssLog(view, 'nascosta in fallback:', 'xss-hint');
-        xssLog(view, window.__dpfHiddenFallback || '(no)', 'xss-cmd');
     }
 
     function createMenu() {
-        var wrapper = document.createElement("div");
+        var wrapper = topDocument.createElement("div");
         wrapper.className = 'xss-wrapper';
-        var actions = document.createElement("div");
+        var actions = topDocument.createElement("div");
         actions.className = 'xss-actions';
-        var view = document.createElement("div");
+        var view = topDocument.createElement("div");
         view.className = 'xss-view';
         wrapper.appendChild(actions);
         wrapper.appendChild(view);
 
-        action(actions, 'DPF auto-close ON/OFF', toggleFilter, view);
-        action(actions, 'Chiudi avviso ora', forceNow, view);
+        action(actions, 'DPF remove ON/OFF', toggleFilter, view);
+        action(actions, 'Rimuovi avviso ora', forceNow, view);
         action(actions, 'Info / diagnosi', showInfo, view);
 
         return wrapper;
@@ -252,14 +299,14 @@
 
     function mount() {
         var wrapper = createMenu();
-        var toggle = document.createElement("div");
+        var toggle = topDocument.createElement("div");
         toggle.innerHTML = "^";
         toggle.className = 'xss-toggle';
         toggle.addEventListener('mousedown', function () {
             window.XSSwrapper.classList.toggle('xss-collapse');
         }, false);
-        window.document.body.appendChild(toggle);
-        window.document.body.appendChild(wrapper);
+        topDocument.body.appendChild(toggle);
+        topDocument.body.appendChild(wrapper);
         window.xssMounted = true;
         window.XSSwrapper = wrapper;
         window.XSStoggle = toggle;
@@ -271,14 +318,6 @@
         if (!window.framework) {
             var framework = {};
             framework.sendEventToMmui = function () {
-            };
-        }
-        if (!window.log) {
-            var log = {
-                error: function () {
-                }, warn: function () {
-                }, info: function () {
-                }
             };
         }
         window.onload = function run() {
