@@ -1,27 +1,30 @@
 (function (document, window, framework, log) {
     // =========================================================================
-    // Nasconde il popup di testo della CMU relativo al DPF ("accumulo DPF").
+    // Chiude automaticamente la schermata "Guida agli avvisi" della CMU quando
+    // mostra l'avviso DPF ("Accumulo PM in DPF").
     //
-    // Questo script viene iniettato ed eseguito da solo all'avvio dell'HMI
-    // (stesso meccanismo del menu XSS): NON servono touch, terminale, tastiera
-    // ne' dump. Intercetta la comparsa del popup nel DOM dell'HMI e lo nasconde.
+    // Testo reale dell'avviso:
+    //   "DPF Accumulo PM in DPF
+    //    La sostanza particolata (PM) raccolta nel filtro particolato diesel
+    //    (DPF) ha superato il limite regolare. Guidare per 10-15 minuti ..."
     //
-    // NOTA: agisce solo sul MESSAGGIO a schermo della CMU. Non tocca la spia sul
-    // cruscotto ne' la centralina motore.
+    // NON e' un popup ma una SCHERMATA (app "Guida agli avvisi"): quindi non la
+    // nascondo (lascerebbe lo schermo vuoto), ma provo a USCIRNE simulando il
+    // "back" (la freccia a sinistra), tornando alla schermata precedente.
+    //
+    // Iniettato all'avvio dell'HMI: NON servono touch, terminale, tastiera, dump.
+    // Agisce solo sul messaggio a schermo, non sulla spia cruscotto ne' sull'ECU.
     // =========================================================================
 
     // ------------------------------------------------------------- CONFIG ----
-    // Parole chiave (minuscolo) che identificano il popup DPF. Aggiungi qui la
-    // frase ESATTA che vedi a schermo, es. 'accumulo dpf', per essere precisi.
-    var DPF_KEYWORDS = ['dpf', 'particolato'];
+    // La schermata e' "DPF" se il suo testo contiene una di queste (minuscolo).
+    var DPF_KEYWORDS = ['accumulo pm in dpf', 'particolato diesel', 'in dpf'];
 
-    // Se true nasconde QUALSIASI elemento che contiene le parole chiave, anche
-    // se non "sembra" un popup. Piu' aggressivo: usalo solo se in modalita'
-    // sicura il popup non viene preso. Rischio: nascondere altra UI.
-    var AGGRESSIVE = false;
+    // Se il "back" non funziona, in fallback nasconde comunque la schermata.
+    var HIDE_FALLBACK = true;
 
-    // Ogni quanto ripassare il DOM (ms) per ricatturare popup ricomparsi.
-    var SWEEP_MS = 1500;
+    // Quante volte ritentare la chiusura (l'avviso a volte ricompare).
+    var SWEEP_MS = 1200;
 
     // ------------------------------------------------------------ utility ----
     function lc(s) {
@@ -29,13 +32,12 @@
     }
 
     function xssLog(view, msg, className) {
-        var msgBox = document.createElement("div");
-        msgBox.className = className
-        msgBox.innerHTML = msg
-        view.appendChild(msgBox)
+        var b = document.createElement("div");
+        b.className = className;
+        b.innerHTML = msg;
+        view.appendChild(b);
     }
 
-    // Non toccare mai gli elementi del nostro menu XSS (contengono "DPF").
     function inXss(el) {
         while (el) {
             if (el.className && lc(el.className).indexOf('xss-') !== -1) return true;
@@ -53,90 +55,118 @@
         return null;
     }
 
-    // Euristica: l'elemento "sembra" un popup/alert?
-    function looksLikePopup(el) {
-        try {
-            var cs = window.getComputedStyle(el);
-            if (cs && (cs.position === 'fixed' || cs.position === 'absolute')) return true;
-        } catch (e) {
-        }
-        var c = lc(el.className), r = '';
-        try {
-            r = lc(el.getAttribute('role'));
-        } catch (e) {
-        }
-        if (/popup|alert|dialog|warn|caution|message|messagebox|notif|toast|modal|attention|wink/.test(c)) return true;
-        if (/alert|dialog/.test(r)) return true;
-        return false;
-    }
-
     function describe(el) {
         var c = '';
         try {
             c = '' + (el.className || '');
         } catch (e) {
         }
-        var t = '';
-        try {
-            t = ('' + (el.textContent || '')).replace(/\s+/g, ' ').slice(0, 70);
-        } catch (e) {
-        }
         return (el.tagName || '?') + (el.id ? ('#' + el.id) : '') +
-            (c ? ('.' + c.split(' ').join('.')) : '') + ' "' + t + '"';
+            (c ? ('.' + c.split(' ').join('.')) : '');
     }
 
-    function tryHide(el) {
+    function fireClick(el) {
+        try {
+            ['mousedown', 'mouseup', 'click'].forEach(function (type) {
+                var ev = document.createEvent('MouseEvents');
+                ev.initMouseEvent(type, true, true, window, 1, 0, 0, 0, 0,
+                    false, false, false, false, 0, null);
+                el.dispatchEvent(ev);
+            });
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // Cerca DENTRO la schermata dell'avviso un controllo "back"/uscita e lo clicca.
+    function clickBack(viewEl) {
+        var candidates = viewEl.querySelectorAll('*');
+        var i, el, sig;
+        var re = /back|return|prev|chevron|arrow|left|close|dismiss|home|exit/;
+        for (i = 0; i < candidates.length; i++) {
+            el = candidates[i];
+            sig = lc(el.className) + ' ' + lc(el.id);
+            try {
+                sig += ' ' + lc(el.getAttribute('data-id') || '') + ' ' + lc(el.getAttribute('role') || '');
+            } catch (e) {
+            }
+            if (re.test(sig)) {
+                window.__dpfBackHit = describe(el);
+                if (fireClick(el)) return true;
+            }
+        }
+        return false;
+    }
+
+    // Tentativi via framework (best-effort, tutti in try/catch).
+    function frameworkBack() {
+        var tried = [];
+        function t(fn, label) {
+            try {
+                fn();
+                tried.push(label);
+            } catch (e) {
+            }
+        }
+        t(function () { framework.sendEventToMmui("home", "SelectHome"); }, 'home/SelectHome');
+        t(function () { framework.sendEventToMmui("System", "back"); }, 'System/back');
+        t(function () { framework.routeMmuiMsg && framework.routeMmuiMsg("System", "back"); }, 'routeMmuiMsg back');
+        t(function () { framework.goBackInHistory && framework.goBackInHistory(); }, 'goBackInHistory');
+        window.__dpfFwTried = tried.join(', ');
+    }
+
+    function handleView(el) {
         if (!el || el.nodeType !== 1) return false;
         if (inXss(el)) return false;
         var kw = matchKeyword(el);
         if (!kw) return false;
 
-        window.__dpfLastCandidate = describe(el);
+        window.__dpfLastMatch = describe(el) + ' [' + kw + ']';
+        if (!window.__dpfOn) return true;
 
-        if (!window.__dpfOn) return false;
+        // 1) prova a cliccare il "back" dentro la schermata
+        var done = clickBack(el);
+        // 2) prova le nav via framework
+        frameworkBack();
 
-        if (!AGGRESSIVE && !looksLikePopup(el)) {
-            // Non lo nascondo (non sembra un popup), ma lo segnalo per diagnosi.
-            window.__dpfLastSkipped = window.__dpfLastCandidate;
-            return false;
+        // 3) fallback: nascondi la schermata
+        if (!done && HIDE_FALLBACK) {
+            try {
+                el.setAttribute('data-dpf-hidden', '1');
+                el.style.display = 'none';
+                el.style.visibility = 'hidden';
+                window.__dpfHiddenFallback = window.__dpfLastMatch;
+            } catch (e) {
+            }
         }
 
-        if (el.getAttribute && el.getAttribute('data-dpf-hidden') === '1') return true;
-        try {
-            el.setAttribute('data-dpf-hidden', '1');
-        } catch (e) {
-        }
-        try {
-            el.style.display = 'none';
-        } catch (e) {
-        }
-        try {
-            el.style.visibility = 'hidden';
-        } catch (e) {
-        }
-        window.__dpfHiddenCount = (window.__dpfHiddenCount || 0) + 1;
-        window.__dpfLastHidden = window.__dpfLastCandidate;
+        window.__dpfCount = (window.__dpfCount || 0) + 1;
         return true;
     }
 
-    // Il testo del popup potrebbe arrivare DOPO che il nodo e' stato aggiunto:
-    // ricontrolla lo stesso nodo alcune volte.
     function considerNode(el) {
-        if (tryHide(el)) return;
+        if (handleView(el)) return;
         var tries = [150, 400, 800, 1500, 2500];
         (function rech(i) {
             if (i >= tries.length) return;
             setTimeout(function () {
-                if (!tryHide(el)) rech(i + 1);
+                if (!handleView(el)) rech(i + 1);
             }, tries[i]);
         })(0);
     }
 
     function scanExisting() {
-        if (!document.body) return;
-        var kids = document.body.children, i;
+        if (!document.body || !window.__dpfOn) return;
+        var kids = document.body.getElementsByTagName('*'), i, el;
+        // scansione mirata: cerca elementi il cui testo contiene le keyword
         for (i = 0; i < kids.length; i++) {
-            tryHide(kids[i]);
+            el = kids[i];
+            if (el.getAttribute && el.getAttribute('data-dpf-hidden') === '1') continue;
+            if (matchKeyword(el)) {
+                handleView(el);
+                break;
+            }
         }
     }
 
@@ -144,7 +174,6 @@
         if (window.__dpfInstalled) return;
         window.__dpfInstalled = true;
         if (window.__dpfOn === undefined) window.__dpfOn = true;
-
         try {
             var Obs = window.MutationObserver || window.WebKitMutationObserver;
             if (Obs) {
@@ -163,7 +192,6 @@
             }
         } catch (e) {
         }
-
         window.__dpfSweep = setInterval(scanExisting, SWEEP_MS);
         scanExisting();
     }
@@ -171,73 +199,77 @@
     // ---------------------------------------------------------- menu XSS ----
     function action(parent, name, cb, view) {
         var b = document.createElement("div");
-        b.innerHTML = name
-        b.className = 'xss-action'
+        b.innerHTML = name;
+        b.className = 'xss-action';
         b.addEventListener('mousedown', function () {
-            view.innerHTML = ""
-            cb(view)
+            view.innerHTML = "";
+            cb(view);
         }, false);
-        parent.appendChild(b)
+        parent.appendChild(b);
     }
 
     function toggleFilter(view) {
-        window.__dpfOn = !window.__dpfOn
-        xssLog(view, 'DPF filter: ' + (window.__dpfOn ? 'ON' : 'OFF'), 'xss-hint')
-        if (window.__dpfOn) scanExisting()
+        window.__dpfOn = !window.__dpfOn;
+        xssLog(view, 'DPF auto-close: ' + (window.__dpfOn ? 'ON' : 'OFF'), 'xss-hint');
+        if (window.__dpfOn) scanExisting();
     }
 
-    function toggleAggressive(view) {
-        AGGRESSIVE = !AGGRESSIVE
-        xssLog(view, 'AGGRESSIVE: ' + (AGGRESSIVE ? 'ON (nasconde tutto cio\' che contiene la parola)' : 'OFF (solo popup)'), 'xss-hint')
-        scanExisting()
+    function forceNow(view) {
+        xssLog(view, 'cerco e chiudo la schermata DPF ora...', 'xss-hint');
+        scanExisting();
+        xssLog(view, 'match: ' + (window.__dpfLastMatch || '(nessuno)'));
+        xssLog(view, 'back cliccato: ' + (window.__dpfBackHit || '(nessuno)'));
     }
 
     function showInfo(view) {
-        xssLog(view, 'filter: ' + (window.__dpfOn ? 'ON' : 'OFF') + ' | aggressive: ' + (AGGRESSIVE ? 'ON' : 'OFF'))
-        xssLog(view, 'nascosti: ' + (window.__dpfHiddenCount || 0))
-        xssLog(view, 'ultimo nascosto:', 'xss-hint')
-        xssLog(view, window.__dpfLastHidden || '(nessuno)', 'xss-cmd')
-        xssLog(view, 'ultimo candidato NON nascosto:', 'xss-hint')
-        xssLog(view, window.__dpfLastSkipped || '(nessuno)', 'xss-cmd')
+        xssLog(view, 'auto-close: ' + (window.__dpfOn ? 'ON' : 'OFF') + ' | chiusure: ' + (window.__dpfCount || 0));
+        xssLog(view, 'ultimo match:', 'xss-hint');
+        xssLog(view, window.__dpfLastMatch || '(nessuno)', 'xss-cmd');
+        xssLog(view, 'back cliccato:', 'xss-hint');
+        xssLog(view, window.__dpfBackHit || '(nessuno)', 'xss-cmd');
+        xssLog(view, 'framework provati:', 'xss-hint');
+        xssLog(view, window.__dpfFwTried || '(nessuno)', 'xss-cmd');
+        xssLog(view, 'nascosta in fallback:', 'xss-hint');
+        xssLog(view, window.__dpfHiddenFallback || '(no)', 'xss-cmd');
     }
 
     function createMenu() {
         var wrapper = document.createElement("div");
-        wrapper.className = 'xss-wrapper'
+        wrapper.className = 'xss-wrapper';
         var actions = document.createElement("div");
-        actions.className = 'xss-actions'
+        actions.className = 'xss-actions';
         var view = document.createElement("div");
-        view.className = 'xss-view'
-        wrapper.appendChild(actions)
-        wrapper.appendChild(view)
+        view.className = 'xss-view';
+        wrapper.appendChild(actions);
+        wrapper.appendChild(view);
 
-        action(actions, 'DPF filter ON/OFF', toggleFilter, view)
-        action(actions, 'Aggressive ON/OFF', toggleAggressive, view)
-        action(actions, 'Info / diagnosi', showInfo, view)
+        action(actions, 'DPF auto-close ON/OFF', toggleFilter, view);
+        action(actions, 'Chiudi avviso ora', forceNow, view);
+        action(actions, 'Info / diagnosi', showInfo, view);
 
-        return wrapper
+        return wrapper;
     }
 
     function mount() {
-        var wrapper = createMenu()
+        var wrapper = createMenu();
         var toggle = document.createElement("div");
         toggle.innerHTML = "^";
-        toggle.className = 'xss-toggle'
+        toggle.className = 'xss-toggle';
         toggle.addEventListener('mousedown', function () {
-            window.XSSwrapper.classList.toggle('xss-collapse')
+            window.XSSwrapper.classList.toggle('xss-collapse');
         }, false);
-        window.document.body.appendChild(toggle)
-        window.document.body.appendChild(wrapper)
-        window.xssMounted = true
-        window.XSSwrapper = wrapper
-        window.XSStoggle = toggle
+        window.document.body.appendChild(toggle);
+        window.document.body.appendChild(wrapper);
+        window.xssMounted = true;
+        window.XSSwrapper = wrapper;
+        window.XSStoggle = toggle;
     }
 
     // ------------------------------------------------------------- boot ----
-    var isDevXss = !window.document.body
+    var isDevXss = !window.document.body;
     if (isDevXss) {
         if (!window.framework) {
-            var framework = {}
+            var framework = {};
             framework.sendEventToMmui = function () {
             };
         }
@@ -247,25 +279,25 @@
                 }, warn: function () {
                 }, info: function () {
                 }
-            }
+            };
         }
         window.onload = function run() {
-            mount()
-            installFilter()
-            window.xssCssReady = true
-        }
+            mount();
+            installFilter();
+            window.xssCssReady = true;
+        };
     } else {
         if (!window.xssCssReady) {
-            utility.loadCss('../../../mnt/sda1/css/init.css')
-            utility.loadCss('../../../mnt/sdb1/css/init.css')
-            utility.loadCss('../../../mnt/sdc1/css/init.css')
-            utility.loadCss('../../../mnt/sdd1/css/init.css')
-            window.xssCssReady = true
+            utility.loadCss('../../../mnt/sda1/css/init.css');
+            utility.loadCss('../../../mnt/sdb1/css/init.css');
+            utility.loadCss('../../../mnt/sdc1/css/init.css');
+            utility.loadCss('../../../mnt/sdd1/css/init.css');
+            window.xssCssReady = true;
         }
         if (!window.xssMounted) {
-            mount()
+            mount();
         }
-        installFilter()
+        installFilter();
     }
 
 })(document, window, window.framework, window.log);
