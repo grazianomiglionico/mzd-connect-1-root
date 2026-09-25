@@ -81,3 +81,30 @@
 .xss-ui-logger_info {
     color: blue;
 }
+.xss-probes {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    width: 96px;
+    padding-right: 6px;
+}
+
+.xss-probe {
+    font-size: 13px;
+    padding: 4px;
+    margin: 2px;
+    min-width: 30px;
+    text-align: center;
+}
+
+.xss-hint {
+    font-weight: bold;
+    margin-top: 4px;
+}
+
+.xss-cmd {
+    font-family: monospace;
+    background: rgba(0, 0, 0, 0.08);
+    padding: 4px;
+    word-break: break-all;
+}

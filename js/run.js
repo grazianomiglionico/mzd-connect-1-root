@@ -6,37 +6,86 @@
         view.appendChild(msgBox)
     }
 
-    var TERMINAL_TEST_ID = 11;
+    // ---------------------------------------------------------------- config ---
+    // In JCI test mode il TOUCH E' BLOCCATO: prima va sbloccato eseguendo lo
+    // script "speed toggle" (touch unlock), altrimenti non puoi toccare TERMINAL
+    // ne' scrivere nel terminale. Questi testId dipendono dall'unita' (casdk):
+    // se non sono giusti, usa i pulsanti di prova "t1..t12" per trovarli.
+    var SPEED_TOGGLE_TEST_ID = 2;   // touch unlock
+    var TERMINAL_TEST_ID = 11;      // terminale
 
-    // Comando che esegue il dump completo della CMU. Lo script sta sulla USB
-    // (vedi dump/cmu-dump.sh). Cambia sda1 se la tua chiavetta monta altrove.
+    // Attesa tra sblocco touch e apertura terminale (ms).
+    var TOUCH_UNLOCK_TO_TERMINAL_MS = 5000;
+
+    // Comando da digitare nel terminale (lo script sta sulla USB).
     var CMU_DUMP_CMD = 'sh /mnt/sda1/dump/cmu-dump.sh';
 
-    function terminal(view) {
-        xssLog(view, 'opening terminal ~20sec')
+    // -------------------------------------------------------------- helper JCI ---
+    // Entra in JCI test mode (Diagnostics -> ActivateJCITest), poi chiama onReady.
+    function enterJciTest(view, onReady) {
+        xssLog(view, 'JCI test mode ~14sec...')
         framework.sendEventToMmui("syssettings", "SelectDiagnostics")
         setTimeout(function () {
             framework.sendEventToMmui("diag", "ActivateJCITest")
             xssLog(view, 'ActivateJCITest')
             setTimeout(function () {
-                framework.sendEventToMmui("diag", "ReadDTC", {"payload": {"testId": TERMINAL_TEST_ID}})
-                xssLog(view, 'activate test 11 ReadDTC')
+                onReady()
             }, 7000)
         }, 7000)
     }
 
-    // Dump completo della CMU: apre il terminale JCI e mostra a schermo il
-    // comando da lanciare (lo script vero e proprio e' su USB, dump/cmu-dump.sh).
-    //
-    // ESECUZIONE AUTOMATICA: se il CMU ha l'autorun casdk/MZD-AIO installato,
-    // inserendo la chiavetta parte da solo dump/autorun.sh (nessuna digitazione).
-    // Altrimenti la UI in WebKit non puo' digitare nel terminale, quindi il
-    // comando va eseguito una volta a mano (poi il dump e' interamente automatico).
-    function cmuDump(view) {
-        xssLog(view, 'CMU full dump: comando da digitare nel terminale:', 'xss-hint')
+    // Esegue una voce "choose a script to run" tramite il suo testId.
+    function runScript(view, testId, label) {
+        framework.sendEventToMmui("diag", "ReadDTC", {"payload": {"testId": testId}})
+        xssLog(view, 'ReadDTC testId ' + testId + (label ? ' (' + label + ')' : ''))
+    }
+
+    function showDumpCmd(view) {
+        xssLog(view, 'Poi nel terminale digita ed esegui:', 'xss-hint')
         xssLog(view, CMU_DUMP_CMD, 'xss-cmd')
-        xssLog(view, 'apro il terminale...')
-        terminal(view)
+    }
+
+    // --------------------------------------------------------------- azioni ---
+    // Solo sblocco touch (in JCI test mode esegue lo "speed toggle").
+    function touchUnlock(view) {
+        enterJciTest(view, function () {
+            runScript(view, SPEED_TOGGLE_TEST_ID, 'touch unlock')
+            xssLog(view, 'touch sbloccato? ora prova a toccare lo schermo')
+        })
+    }
+
+    // Solo terminale (senza sblocco touch).
+    function terminal(view) {
+        enterJciTest(view, function () {
+            runScript(view, TERMINAL_TEST_ID, 'terminal')
+        })
+    }
+
+    // Flusso completo dump: test mode -> sblocca touch -> terminale -> comando.
+    // Una sola JCI test mode, come il flusso manuale.
+    function cmuDump(view) {
+        xssLog(view, 'CMU full dump: sblocco touch poi terminale...')
+        enterJciTest(view, function () {
+            runScript(view, SPEED_TOGGLE_TEST_ID, 'touch unlock')
+            setTimeout(function () {
+                runScript(view, TERMINAL_TEST_ID, 'terminal')
+                showDumpCmd(view)
+            }, TOUCH_UNLOCK_TO_TERMINAL_MS)
+        })
+    }
+
+    // Entra SOLO in JCI test mode e lascia pronto per i pulsanti di prova tN.
+    function enterTest(view) {
+        enterJciTest(view, function () {
+            xssLog(view, 'JCI test mode attiva: usa i pulsanti t1..t12 per provare gli script', 'xss-hint')
+        })
+    }
+
+    // Prova diretta di un testId (assume di essere GIA' in JCI test mode:
+    // premi prima "Enter JCI test", poi questi pulsanti).
+    function probe(view, id) {
+        runScript(view, id, 'PROBE')
+        xssLog(view, 'guarda cosa succede sullo schermo per testId ' + id)
     }
 
     function UIxssLog(view) {
@@ -94,6 +143,18 @@
         parent.appendChild(xActionBtn)
     }
 
+    // Pulsante di prova compatto per un testId (non pulisce il log, cosi' vedi
+    // la sequenza dei tentativi).
+    function probeButton(parent, id, view) {
+        var b = document.createElement("div");
+        b.innerHTML = 't' + id
+        b.className = 'xss-action xss-probe'
+        b.addEventListener('mousedown', function () {
+            probe(view, id)
+        }, false);
+        parent.appendChild(b)
+    }
+
     function createMenu() {
         var XSSwrapper = document.createElement("div");
         XSSwrapper.className = 'xss-wrapper'
@@ -104,8 +165,20 @@
         XSSwrapper.appendChild(XSSactions)
         XSSwrapper.appendChild(view)
 
-        action(XSSactions, 'Open terminal', terminal, view)
         action(XSSactions, 'Full CMU dump', cmuDump, view)
+        action(XSSactions, 'Touch unlock', touchUnlock, view)
+        action(XSSactions, 'Open terminal', terminal, view)
+        action(XSSactions, 'Enter JCI test', enterTest, view)
+
+        // Riga di prova testId (premi prima "Enter JCI test").
+        var probes = document.createElement("div");
+        probes.className = 'xss-actions xss-probes'
+        var i
+        for (i = 1; i <= 12; i++) {
+            probeButton(probes, i, view)
+        }
+        XSSwrapper.insertBefore(probes, view)
+
         action(XSSactions, 'Ui logs', UIxssLog, view)
         action(XSSactions, 'Set UI region: EU', setXSSRegion, view)
         action(XSSactions, 'Restart', restart, view)
@@ -126,8 +199,8 @@
         return window.document.body
     }
 
-    // Sequenza automatica allo startup: apre il terminale JCI e mostra il comando
-    // di dump. Va eseguito una volta nel terminale; il dump poi e' automatico.
+    // Sequenza automatica allo startup: sblocca il touch e apre il terminale,
+    // poi mostra il comando di dump da digitare.
     function autoStart() {
         cmuDump(getStartupView())
     }
